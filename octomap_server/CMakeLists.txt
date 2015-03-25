@@ -1,5 +1,12 @@
-cmake_minimum_required(VERSION 2.8)
+cmake_minimum_required(VERSION 2.8.3)
 project(octomap_server)
+SET(CMAKE_BUILD_TYPE Release) 
+
+IF(CMAKE_COMPILER_IS_GNUCC)
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++0x")
+ELSE()
+  SET(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -std=c++11")
+ENDIF()
 
 set(PACKAGE_DEPENDENCIES
   roscpp
@@ -47,7 +54,7 @@ set(LINK_LIBS
   ${PCL_LIBRARIES}
 )
 
-add_library(${PROJECT_NAME} src/OctomapServer.cpp src/OctomapServerMultilayer.cpp src/TrackingOctomapServer.cpp)
+add_library(${PROJECT_NAME} src/OctomapServer.cpp src/OctomapServerMultilayer.cpp src/TrackingOctomapServer.cpp src/TextureOctomapServer.cpp)
 target_link_libraries(${PROJECT_NAME} ${LINK_LIBS})
 add_dependencies(${PROJECT_NAME} ${PROJECT_NAME}_gencfg)
 
@@ -65,6 +72,9 @@ target_link_libraries(octomap_saver ${PROJECT_NAME} ${LINK_LIBS})
 
 add_executable(octomap_tracking_server_node src/octomap_tracking_server_node.cpp)
 target_link_libraries(octomap_tracking_server_node ${PROJECT_NAME} ${LINK_LIBS})
+
+add_executable(octomap_texture_server_node src/octomap_texture_server_node.cpp)
+target_link_libraries(octomap_texture_server_node ${PROJECT_NAME} ${LINK_LIBS})
 
 # Nodelet
 add_library(octomap_server_nodelet src/octomap_server_nodelet.cpp)
