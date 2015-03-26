@@ -43,15 +43,17 @@
 #include <pcl/point_types.h>
 #include <pcl/conversions.h>
 #include <pcl_ros/transforms.h>
-#include <pcl/sample_consensus/method_types.h>
-#include <pcl/sample_consensus/model_types.h>
-#include <pcl/segmentation/sac_segmentation.h>
+//#include <pcl/sample_consensus/method_types.h>
+//#include <pcl/sample_consensus/model_types.h>
+//#include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/filters/passthrough.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <pcl/point_types_conversion.h>
 
+#include <cv_bridge/cv_bridge.h>
+#include <sensor_msgs/image_encodings.h>
 
 #include <tf/transform_listener.h>
 #include <tf/message_filter.h>
@@ -60,6 +62,7 @@
 #include <octomap_msgs/GetOctomap.h>
 #include <octomap_msgs/BoundingBoxQuery.h>
 #include <octomap_msgs/conversions.h>
+#include <octomap_msgs/TextureViewSynthesis.h>
 
 #include <octomap_ros/conversions.h>
 #include <octomap/octomap.h>
@@ -74,6 +77,7 @@ public:
   typedef pcl::PointCloud<pcl::PointXYZRGB> PCLPointCloudRGB;
   typedef octomap_msgs::GetOctomap OctomapSrv;
   typedef octomap_msgs::BoundingBoxQuery BBXSrv;
+  typedef octomap_msgs::TextureViewSynthesis TextureSrv;
 
   typedef octomap::TextureOcTree OcTreeT;
 
@@ -83,6 +87,7 @@ public:
   virtual bool octomapFullSrv(OctomapSrv::Request  &req, OctomapSrv::GetOctomap::Response &res);
   bool clearBBXSrv(BBXSrv::Request& req, BBXSrv::Response& resp);
   bool resetSrv(std_srvs::Empty::Request& req, std_srvs::Empty::Response& resp);
+  bool synthesizeViewsSrv(TextureSrv::Request &req, TextureSrv::Response &res);
 
   virtual void insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud);
   virtual bool openFile(const std::string& filename);
@@ -126,7 +131,13 @@ protected:
                           const PCLPointCloud& ground, const PCLPointCloud& nonground);
 
   /// label the input cloud "pc" into ground and nonground. Should be in the robot's fixed frame (not world!)
-  void filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const;
+  //void filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const;
+  
+  void synthesizeView(const octomap::point3d& pos, const octomath::Vector3& orient, 
+                      const unsigned int& h, const unsigned int& w,
+                      const float& fx, const float& fy,
+                      const float& cx, const float& cy,
+                      cv::Mat& image, cv::Mat& depth);
 
   /**
   * @brief Find speckle nodes (single occupied voxels with no neighbors). Only works on lowest resolution!
@@ -193,6 +204,7 @@ protected:
   message_filters::Subscriber<sensor_msgs::PointCloud2>* m_pointCloudSub;
   tf::MessageFilter<sensor_msgs::PointCloud2>* m_tfPointCloudSub;
   ros::ServiceServer m_octomapBinaryService, m_octomapFullService, m_clearBBXService, m_resetService;
+  ros::ServiceServer m_viewSynthesisService;
   tf::TransformListener m_tfListener;
   dynamic_reconfigure::Server<OctomapServerConfig> m_reconfigureServer;
 
@@ -232,10 +244,10 @@ protected:
   double m_minSizeY;
   bool m_filterSpeckles;
 
-  bool m_filterGroundPlane;
-  double m_groundFilterDistance;
-  double m_groundFilterAngle;
-  double m_groundFilterPlaneDistance;
+  //bool m_filterGroundPlane;
+  //double m_groundFilterDistance;
+  //double m_groundFilterAngle;
+  //double m_groundFilterPlaneDistance;
 
   bool m_compressMap;
 

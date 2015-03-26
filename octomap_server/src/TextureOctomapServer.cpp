@@ -58,8 +58,8 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   m_occupancyMinZ(-std::numeric_limits<double>::max()),
   m_occupancyMaxZ(std::numeric_limits<double>::max()),
   m_minSizeX(0.0), m_minSizeY(0.0),
-  m_filterSpeckles(false), m_filterGroundPlane(false),
-  m_groundFilterDistance(0.04), m_groundFilterAngle(0.15), m_groundFilterPlaneDistance(0.07),
+  m_filterSpeckles(false), //m_filterGroundPlane(false),
+  //m_groundFilterDistance(0.04), m_groundFilterAngle(0.15), m_groundFilterPlaneDistance(0.07),
   m_compressMap(true),
   m_incrementalUpdate(false)
 {
@@ -77,13 +77,13 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   private_nh.param("min_y_size", m_minSizeY,m_minSizeY);
 
   private_nh.param("filter_speckles", m_filterSpeckles, m_filterSpeckles);
-  private_nh.param("filter_ground", m_filterGroundPlane, m_filterGroundPlane);
+  //private_nh.param("filter_ground", m_filterGroundPlane, m_filterGroundPlane);
   // distance of points from plane for RANSAC
-  private_nh.param("ground_filter/distance", m_groundFilterDistance, m_groundFilterDistance);
+  //private_nh.param("ground_filter/distance", m_groundFilterDistance, m_groundFilterDistance);
   // angular derivation of found plane:
-  private_nh.param("ground_filter/angle", m_groundFilterAngle, m_groundFilterAngle);
+  //private_nh.param("ground_filter/angle", m_groundFilterAngle, m_groundFilterAngle);
   // distance of found plane from z=0 to be detected as ground (e.g. to exclude tables)
-  private_nh.param("ground_filter/plane_distance", m_groundFilterPlaneDistance, m_groundFilterPlaneDistance);
+  //private_nh.param("ground_filter/plane_distance", m_groundFilterPlaneDistance, m_groundFilterPlaneDistance);
 
   private_nh.param("sensor_model/max_range", m_maxRange, m_maxRange);
   //private_nh.param("sensor_model/stereo_model", m_stereoModel, m_stereoModel);
@@ -98,12 +98,13 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   private_nh.param("compress_map", m_compressMap, m_compressMap);
   private_nh.param("incremental_2D_projection", m_incrementalUpdate, m_incrementalUpdate);
 
+  /*
   if (m_filterGroundPlane && (m_pointcloudMinZ > 0.0 || m_pointcloudMaxZ < 0.0)){
 	  ROS_WARN_STREAM("You enabled ground filtering but incoming pointclouds will be pre-filtered in ["
 			  <<m_pointcloudMinZ <<", "<< m_pointcloudMaxZ << "], excluding the ground level z=0. "
 			  << "This will not work.");
-
   }
+  */
 
 
   // initialize octomap object & params
@@ -153,6 +154,7 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   m_fmarkerPub = m_nh.advertise<visualization_msgs::MarkerArray>("free_cells_vis_array", 1, m_latchedTopics);
 
   m_pointCloudSub = new message_filters::Subscriber<sensor_msgs::PointCloud2> (m_nh, "cloud_in", 5);
+  ROS_INFO("Setting up message filter with world frame %s", m_worldFrameId.c_str());
   m_tfPointCloudSub = new tf::MessageFilter<sensor_msgs::PointCloud2> (*m_pointCloudSub, m_tfListener, m_worldFrameId, 5);
   m_tfPointCloudSub->registerCallback(boost::bind(&TextureOctomapServer::insertCloudCallback, this, _1));
 
@@ -160,11 +162,14 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   m_octomapFullService = m_nh.advertiseService("octomap_full", &TextureOctomapServer::octomapFullSrv, this);
   m_clearBBXService = private_nh.advertiseService("clear_bbx", &TextureOctomapServer::clearBBXSrv, this);
   m_resetService = private_nh.advertiseService("reset", &TextureOctomapServer::resetSrv, this);
+  m_viewSynthesisService = private_nh.advertiseService("synthesize_views", &TextureOctomapServer::synthesizeViewsSrv, this);
 
   dynamic_reconfigure::Server<OctomapServerConfig>::CallbackType f;
 
   f = boost::bind(&TextureOctomapServer::reconfigureCallback, this, _1, _2);
   m_reconfigureServer.setCallback(f);
+
+  ROS_INFO("Finished octomap server init.");
 }
 
 TextureOctomapServer::~TextureOctomapServer(){
@@ -276,6 +281,7 @@ void TextureOctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::C
   PCLPointCloud pc_ground; // segmented ground plane
   PCLPointCloud pc_nonground; // everything else
 
+  /*
   if (m_filterGroundPlane){
     tf::StampedTransform sensorToBaseTf, baseToWorldTf;
     try{
@@ -304,6 +310,7 @@ void TextureOctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::C
     pcl::transformPointCloud(pc_ground, pc_ground, baseToWorld);
     pcl::transformPointCloud(pc_nonground, pc_nonground, baseToWorld);
   } else {
+  */
     // directly transform to map frame:
     pcl::transformPointCloud(pc, pc, sensorToWorld);
 
@@ -315,7 +322,7 @@ void TextureOctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::C
     // pc_nonground is empty without ground segmentation
     pc_ground.header = pc.header;
     pc_nonground.header = pc.header;
-  }
+  //}
 
 
   insertScan(sensorToWorldTf.getOrigin(), orientation, pc_ground, pc_nonground);
@@ -734,6 +741,56 @@ bool TextureOctomapServer::resetSrv(std_srvs::Empty::Request& req, std_srvs::Emp
   return true;
 }
 
+
+void TextureOctomapServer::synthesizeView(const point3d& pos, const octomath::Vector3& orient, 
+                                          const unsigned int& h, const unsigned int& w,
+                                          const float& fx, const float& fy,
+                                          const float& cx, const float& cy,
+                                          cv::Mat& image, cv::Mat& depth)
+{
+
+  return;
+}
+
+bool TextureOctomapServer::synthesizeViewsSrv(TextureSrv::Request &req, TextureSrv::Response &res) {
+  if (req.positions.size() != req.orientations.size())
+    return false;
+
+  std::vector<sensor_msgs::Image> images;
+  std::vector<sensor_msgs::Image> depths;
+
+  for(unsigned i = 0; i < req.positions.size(); i++)
+  {
+    // Convert point
+    point3d pos = pointMsgToOctomap(req.positions.at(i));
+    // Convert orientation
+    octomath::Vector3 orient(req.orientations.at(i).x, req.orientations.at(i).y, req.orientations.at(i).z);
+
+    // Create some opencv mats to hold the output
+    cv::Mat im, d;
+
+    // Call the view synthesizer function for this pose
+    synthesizeView(pos,orient,req.h,req.w,req.fx,req.fy,req.cx,req.cy,im,d);
+
+    // Pack up the output 
+    cv_bridge::CvImagePtr im_ptr(new cv_bridge::CvImage);
+    im_ptr->image = im;
+    im_ptr->encoding = "mono8";
+    cv_bridge::CvImagePtr d_ptr(new cv_bridge::CvImage);
+    d_ptr->image = d;
+    d_ptr->encoding = sensor_msgs::image_encodings::TYPE_32FC1;
+
+    sensor_msgs::Image image = *(im_ptr->toImageMsg());
+    images.push_back(image);
+    sensor_msgs::Image depth = *(d_ptr->toImageMsg());
+    depths.push_back(depth);
+  }
+  res.images = images;
+  res.depths = depths;
+
+  return true;
+}
+
 void TextureOctomapServer::publishBinaryOctoMap(const ros::Time& rostime) const{
 
   Octomap map;
@@ -759,7 +816,7 @@ void TextureOctomapServer::publishFullOctoMap(const ros::Time& rostime) const{
 
 }
 
-
+/*
 void TextureOctomapServer::filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const{
   ground.header = pc.header;
   nonground.header = pc.header;
@@ -865,9 +922,8 @@ void TextureOctomapServer::filterGroundPlane(const PCLPointCloud& pc, PCLPointCl
     //          writer.write<pcl::PointXYZ>("nonground.pcd",pc_nonground, false);
 
   }
-
-
 }
+*/
 
 void TextureOctomapServer::handlePreNodeTraversal(const ros::Time& rostime){
   if (m_publish2DMap){

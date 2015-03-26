@@ -30,8 +30,8 @@
 #include <ros/ros.h>
 #include <octomap_server/TextureOctomapServer.h>
 
-#define USAGE "\nUSAGE: octomap_tracking_server <map.bt>\n" \
-              "  map.bt: octomap 3D map file to read\n"
+#define USAGE "\nUSAGE: octomap_texture_server <map.[bt|ot]>\n" \
+		"  map.bt: inital octomap 3D map file to read\n"
 
 using namespace octomap_server;
 
@@ -40,19 +40,30 @@ int main(int argc, char** argv){
   std::string mapFilename("");
 
   if (argc > 2 || (argc == 2 && std::string(argv[1]) == "-h")){
-	  ROS_ERROR("%s", USAGE);
-	  exit(-1);
+    ROS_ERROR("%s", USAGE);
+    exit(-1);
   }
 
-  if (argc == 2)
-	  mapFilename = std::string(argv[1]);
+
+  TextureOctomapServer server;
+  ros::spinOnce();
+
+  if (argc == 2){
+    mapFilename = std::string(argv[1]);
+    if (!server.openFile(mapFilename)){
+      ROS_ERROR("Could not open file %s", mapFilename.c_str());
+      exit(1);
+    }
+  }
+
+
+
 
   try{
-	  TextureOctomapServer ms(mapFilename);
-	  ros::spin();
+    ros::spin();
   }catch(std::runtime_error& e){
-	  ROS_ERROR("octomap_texture_server exception: %s", e.what());
-	  return -1;
+    ROS_ERROR("octomap_texture_server exception: %s", e.what());
+    return -1;
   }
 
   return 0;
