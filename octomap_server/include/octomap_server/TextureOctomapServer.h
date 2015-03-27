@@ -133,7 +133,7 @@ protected:
   /// label the input cloud "pc" into ground and nonground. Should be in the robot's fixed frame (not world!)
   //void filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const;
   
-  void synthesizeView(const octomap::point3d& pos, const octomath::Vector3& orient, 
+  void synthesizeView(const octomap::point3d& pos, const octomath::Quaternion& orient, 
                       const unsigned int& h, const unsigned int& w,
                       const float& fx, const float& fy,
                       const float& cx, const float& cy,

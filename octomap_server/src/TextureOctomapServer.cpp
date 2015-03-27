@@ -742,29 +742,73 @@ bool TextureOctomapServer::resetSrv(std_srvs::Empty::Request& req, std_srvs::Emp
 }
 
 
-void TextureOctomapServer::synthesizeView(const point3d& pos, const octomath::Vector3& orient, 
+void TextureOctomapServer::synthesizeView(const point3d& pos, const octomath::Quaternion& orient, 
                                           const unsigned int& h, const unsigned int& w,
                                           const float& fx, const float& fy,
                                           const float& cx, const float& cy,
                                           cv::Mat& image, cv::Mat& depth)
 {
+  image.create(h,w,CV_8U);
+  depth.create(h,w,CV_32F);
+
+  octomath::Quaternion imageToCam(0.5,-0.5,0.5,-0.5);
+  octomath::Quaternion r = orient.inv() * imageToCam;
+
+  // Cast Ray for each pixel
+  for (unsigned v = 0; v < h; ++v)
+  {
+    for (unsigned u = 0; u < w; ++u)
+    {
+      float z = 1.0; // Use unit z for direction
+      float x = (z/fx)*((u+0.5) - cx);
+      float y = (z/fy)*((v+0.5) - cy);
+
+      octomath::Vector3 pixDir(x,y,z);
+      pixDir.normalize();
+      octomath::Vector3 ray = r.rotate(pixDir);
+      point3d end;
+      
+      // Cast ray to find voxel intersection
+      bool ignoreUnknown = true;  
+      bool found = m_octree->castRay(pos,ray,end,ignoreUnknown,m_maxRange);
+      
+      if(found)
+      {
+        // Set depth from distance to voxel center
+        // Transform endpoint back to image coords
+        octomath::Vector3 p = end - pos;
+        p = r.inv().rotate(p);
+        depth.at<float>(v,u) = p.z();
+
+        // Compute intensity of voxel face that ray intersects
+        image.at<unsigned char>(v,u) = m_octree->getTexturePoint(end,ray,pos); 
+      }
+      else
+      {
+        image.at<unsigned char>(v,u) = 0;
+        depth.at<float>(v,u) = 0.0;
+      }
+    }
+  }
 
   return;
 }
 
 bool TextureOctomapServer::synthesizeViewsSrv(TextureSrv::Request &req, TextureSrv::Response &res) {
-  if (req.positions.size() != req.orientations.size())
-    return false;
 
+  ros::Time start = ros::Time::now();
   std::vector<sensor_msgs::Image> images;
   std::vector<sensor_msgs::Image> depths;
 
-  for(unsigned i = 0; i < req.positions.size(); i++)
+  for(unsigned i = 0; i < req.poses.size(); i++)
   {
     // Convert point
-    point3d pos = pointMsgToOctomap(req.positions.at(i));
+    point3d pos = pointMsgToOctomap(req.poses.at(i).position);
     // Convert orientation
-    octomath::Vector3 orient(req.orientations.at(i).x, req.orientations.at(i).y, req.orientations.at(i).z);
+    octomath::Quaternion orient(req.poses.at(i).orientation.w, 
+                                req.poses.at(i).orientation.x, 
+                                req.poses.at(i).orientation.y,
+                                req.poses.at(i).orientation.z);
 
     // Create some opencv mats to hold the output
     cv::Mat im, d;
@@ -787,7 +831,11 @@ bool TextureOctomapServer::synthesizeViewsSrv(TextureSrv::Request &req, TextureS
   }
   res.images = images;
   res.depths = depths;
-
+  
+  ros::Time end = ros::Time::now();
+  double elapsed = (end-start).toSec();
+  ROS_INFO("Time to synthesize %d view: %f", elapsed, req.poses.size());
+  
   return true;
 }
 
