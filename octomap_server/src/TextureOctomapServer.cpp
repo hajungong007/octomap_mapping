@@ -754,6 +754,13 @@ void TextureOctomapServer::synthesizeView(const point3d& pos, const octomath::Qu
   octomath::Quaternion imageToCam(0.5,-0.5,0.5,-0.5);
   octomath::Quaternion r = orient.inv() * imageToCam;
 
+/*
+#ifdef _OPENMP
+  omp_set_num_threads(m_octree->keyrays.size());
+  #pragma omp parallel for
+#endif
+*/
+
   // Cast Ray for each pixel
   for (unsigned v = 0; v < h; ++v)
   {
@@ -834,7 +841,7 @@ bool TextureOctomapServer::synthesizeViewsSrv(TextureSrv::Request &req, TextureS
   
   ros::Time end = ros::Time::now();
   double elapsed = (end-start).toSec();
-  ROS_INFO("Time to synthesize %d view: %f", elapsed, req.poses.size());
+  ROS_INFO("Time to synthesize %d views: %f", (int) req.poses.size(), elapsed);
   
   return true;
 }

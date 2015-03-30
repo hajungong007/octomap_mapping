@@ -30,15 +30,16 @@ protected:
   {
     //ros::Time start = ros::Time::now();
     std::vector<geometry_msgs::Pose> poses;
-    poses.push_back(msg);
+    for(unsigned i = 0; i<1000; ++i)
+      poses.push_back(msg);
     TextureViewSynthesis::Request req;
     req.poses = poses;
-    req.h = 120;
-    req.w = 160;
+    req.w = 80;
+    req.h = 60;
     req.fx = 100;
     req.fy = 100;
-    req.cx = 80;
-    req.cy = 60;
+    req.cx = 40;
+    req.cy = 30;
     std::string servname = "/octomap_server/synthesize_views";
     ROS_INFO("Sending view synthesis request to %s...", n.resolveName(servname).c_str());
     TextureViewSynthesis::Response resp;
