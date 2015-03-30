@@ -40,9 +40,8 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   m_tfPointCloudSub(NULL),
   m_octree(NULL),
   m_maxRange(-1.0),
-  //m_stereoModel(false),
   m_stereoErrorCoeff(10.0),
-  m_worldFrameId("/map"), m_baseFrameId("base_footprint"),
+  m_worldFrameId("/map"),
   m_useHeightMap(true),
   m_colorFactor(0.8),
   m_latchedTopics(true),
@@ -58,14 +57,12 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   m_occupancyMinZ(-std::numeric_limits<double>::max()),
   m_occupancyMaxZ(std::numeric_limits<double>::max()),
   m_minSizeX(0.0), m_minSizeY(0.0),
-  m_filterSpeckles(false), //m_filterGroundPlane(false),
-  //m_groundFilterDistance(0.04), m_groundFilterAngle(0.15), m_groundFilterPlaneDistance(0.07),
+  m_filterSpeckles(false),
   m_compressMap(true),
   m_incrementalUpdate(false)
 {
   ros::NodeHandle private_nh(private_nh_);
   private_nh.param("frame_id", m_worldFrameId, m_worldFrameId);
-  private_nh.param("base_frame_id", m_baseFrameId, m_baseFrameId);
   private_nh.param("height_map", m_useHeightMap, m_useHeightMap);
   private_nh.param("color_factor", m_colorFactor, m_colorFactor);
 
@@ -77,16 +74,8 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   private_nh.param("min_y_size", m_minSizeY,m_minSizeY);
 
   private_nh.param("filter_speckles", m_filterSpeckles, m_filterSpeckles);
-  //private_nh.param("filter_ground", m_filterGroundPlane, m_filterGroundPlane);
-  // distance of points from plane for RANSAC
-  //private_nh.param("ground_filter/distance", m_groundFilterDistance, m_groundFilterDistance);
-  // angular derivation of found plane:
-  //private_nh.param("ground_filter/angle", m_groundFilterAngle, m_groundFilterAngle);
-  // distance of found plane from z=0 to be detected as ground (e.g. to exclude tables)
-  //private_nh.param("ground_filter/plane_distance", m_groundFilterPlaneDistance, m_groundFilterPlaneDistance);
 
   private_nh.param("sensor_model/max_range", m_maxRange, m_maxRange);
-  //private_nh.param("sensor_model/stereo_model", m_stereoModel, m_stereoModel);
   private_nh.param("sensor_model/stereo_error_coeff", m_stereoErrorCoeff, m_stereoErrorCoeff);
 
   private_nh.param("resolution", m_res, m_res);
@@ -97,14 +86,6 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   private_nh.param("sensor_model/max", m_thresMax, m_thresMax);
   private_nh.param("compress_map", m_compressMap, m_compressMap);
   private_nh.param("incremental_2D_projection", m_incrementalUpdate, m_incrementalUpdate);
-
-  /*
-  if (m_filterGroundPlane && (m_pointcloudMinZ > 0.0 || m_pointcloudMaxZ < 0.0)){
-	  ROS_WARN_STREAM("You enabled ground filtering but incoming pointclouds will be pre-filtered in ["
-			  <<m_pointcloudMinZ <<", "<< m_pointcloudMaxZ << "], excluding the ground level z=0. "
-			  << "This will not work.");
-  }
-  */
 
 
   // initialize octomap object & params
@@ -168,8 +149,17 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
 
   f = boost::bind(&TextureOctomapServer::reconfigureCallback, this, _1, _2);
   m_reconfigureServer.setCallback(f);
+  
+  // Set up change tracking
+  std::string changeSetTopic = "changes";
+  private_nh.param("topic_changes", changeSetTopic, changeSetTopic);
+  private_nh.param("track_changes", track_changes, false);
 
-  ROS_INFO("Finished octomap server init.");
+  if (track_changes) {
+    ROS_INFO("Octmap server set to track changes");
+    pubChangeSet = private_nh.advertise<sensor_msgs::PointCloud2>(changeSetTopic, 1);
+    m_octree->enableChangeDetection(true);
+  }
 }
 
 TextureOctomapServer::~TextureOctomapServer(){
@@ -247,10 +237,7 @@ bool TextureOctomapServer::openFile(const std::string& filename){
 void TextureOctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::ConstPtr& cloud){
   ros::WallTime startTime = ros::WallTime::now();
 
-  //
-  // ground filtering in base frame
-  //
-  PCLPointCloudRGB pc_rgb; // input cloud for filtering and ground-detection
+  PCLPointCloudRGB pc_rgb; // input cloud for filtering
   pcl::fromROSMsg(*cloud, pc_rgb);
   PCLPointCloud pc;
   pcl::PointCloudXYZRGBtoXYZI(pc_rgb, pc);
@@ -278,63 +265,25 @@ void TextureOctomapServer::insertCloudCallback(const sensor_msgs::PointCloud2::C
   pass.setFilterFieldName("z");
   pass.setFilterLimits(m_pointcloudMinZ, m_pointcloudMaxZ);
 
-  PCLPointCloud pc_ground; // segmented ground plane
-  PCLPointCloud pc_nonground; // everything else
+  // directly transform to map frame:
+  pcl::transformPointCloud(pc, pc, sensorToWorld);
 
-  /*
-  if (m_filterGroundPlane){
-    tf::StampedTransform sensorToBaseTf, baseToWorldTf;
-    try{
-      m_tfListener.waitForTransform(m_baseFrameId, cloud->header.frame_id, cloud->header.stamp, ros::Duration(0.2));
-      m_tfListener.lookupTransform(m_baseFrameId, cloud->header.frame_id, cloud->header.stamp, sensorToBaseTf);
-      m_tfListener.lookupTransform(m_worldFrameId, m_baseFrameId, cloud->header.stamp, baseToWorldTf);
+  // just filter height range:
+  pass.setInputCloud(pc.makeShared());
+  pass.filter(pc);
 
-
-    }catch(tf::TransformException& ex){
-      ROS_ERROR_STREAM( "Transform error for ground plane filter: " << ex.what() << ", quitting callback.\n"
-                        "You need to set the base_frame_id or disable filter_ground.");
-    }
-
-
-    Eigen::Matrix4f sensorToBase, baseToWorld;
-    pcl_ros::transformAsMatrix(sensorToBaseTf, sensorToBase);
-    pcl_ros::transformAsMatrix(baseToWorldTf, baseToWorld);
-
-    // transform pointcloud from sensor frame to fixed robot frame
-    pcl::transformPointCloud(pc, pc, sensorToBase);
-    pass.setInputCloud(pc.makeShared());
-    pass.filter(pc);
-    filterGroundPlane(pc, pc_ground, pc_nonground);
-
-    // transform clouds to world frame for insertion
-    pcl::transformPointCloud(pc_ground, pc_ground, baseToWorld);
-    pcl::transformPointCloud(pc_nonground, pc_nonground, baseToWorld);
-  } else {
-  */
-    // directly transform to map frame:
-    pcl::transformPointCloud(pc, pc, sensorToWorld);
-
-    // just filter height range:
-    pass.setInputCloud(pc.makeShared());
-    pass.filter(pc);
-
-    pc_nonground = pc;
-    // pc_nonground is empty without ground segmentation
-    pc_ground.header = pc.header;
-    pc_nonground.header = pc.header;
-  //}
-
-
-  insertScan(sensorToWorldTf.getOrigin(), orientation, pc_ground, pc_nonground);
+  insertScan(sensorToWorldTf.getOrigin(), orientation, pc);
 
   double total_elapsed = (ros::WallTime::now() - startTime).toSec();
-  ROS_DEBUG("Pointcloud insertion in TextureOctomapServer done (%zu+%zu pts (ground/nonground), %f sec)", pc_ground.size(), pc_nonground.size(), total_elapsed);
+  ROS_DEBUG("Pointcloud insertion in TextureOctomapServer done (%zu pts, %f sec)", pc.size(), total_elapsed);
 
   publishAll(cloud->header.stamp);
 }
 
-void TextureOctomapServer::insertScan(const tf::Point& sensorOriginTf, const octomath::Vector3& sensorOrientation,
-                               const PCLPointCloud& ground, const PCLPointCloud& nonground){
+void TextureOctomapServer::insertScan(const tf::Point& sensorOriginTf, 
+                                      const octomath::Vector3& sensorOrientation,
+                                      const PCLPointCloud& scan)
+{
   point3d sensorOrigin = pointTfToOctomap(sensorOriginTf);
 
   if (!m_octree->coordToKeyChecked(sensorOrigin, m_updateBBXMin)
@@ -343,32 +292,9 @@ void TextureOctomapServer::insertScan(const tf::Point& sensorOriginTf, const oct
     ROS_ERROR_STREAM("Could not generate Key for origin "<<sensorOrigin);
   }
 
-  // instead of direct scan insertion, compute update to filter ground:
+  // Insert points: free on ray, occupied on endpoint:
   KeySet free_cells, occupied_cells;
-  // insert ground points only as free:
-  for (PCLPointCloud::const_iterator it = ground.begin(); it != ground.end(); ++it){
-    point3d point(it->x, it->y, it->z);
-    // maxrange check
-    if ((m_maxRange > 0.0) && ((point - sensorOrigin).norm() > m_maxRange) ) {
-      point = sensorOrigin + (point - sensorOrigin).normalized() * m_maxRange;
-    }
-
-    // only clear space (ground points)
-    if (m_octree->computeRayKeys(sensorOrigin, point, m_keyRay)){
-      free_cells.insert(m_keyRay.begin(), m_keyRay.end());
-    }
-
-    octomap::OcTreeKey endKey;
-    if (m_octree->coordToKeyChecked(point, endKey)){
-      updateMinKey(endKey, m_updateBBXMin);
-      updateMaxKey(endKey, m_updateBBXMax);
-    } else{
-      ROS_ERROR_STREAM("Could not generate Key for endpoint "<<point);
-    }
-  }
-
-  // all other points: free on ray, occupied on endpoint:
-  for (PCLPointCloud::const_iterator it = nonground.begin(); it != nonground.end(); ++it){
+  for (PCLPointCloud::const_iterator it = scan.begin(); it != scan.end(); ++it){
     point3d point(it->x, it->y, it->z);
     // maxrange check
     if ((m_maxRange < 0.0) || ((point - sensorOrigin).norm() <= m_maxRange) ) {
@@ -412,11 +338,15 @@ void TextureOctomapServer::insertScan(const tf::Point& sensorOriginTf, const oct
   }
 
   // Now update intensities from all points not filtered
-  for (PCLPointCloud::const_iterator it = nonground.begin(); it != nonground.end(); ++it)
+  for (PCLPointCloud::const_iterator it = scan.begin(); it != scan.end(); ++it)
   {
     point3d point(it->x, it->y, it->z);
     unsigned char intensity = floor(it->intensity);
     m_octree->insertTexturePoint(point,intensity,sensorOrigin);
+  }
+
+  if (track_changes) {
+    trackChanges();
   }
 
   // TODO: eval lazy+updateInner vs. proper insertion
@@ -425,17 +355,6 @@ void TextureOctomapServer::insertScan(const tf::Point& sensorOriginTf, const oct
   octomap::point3d minPt, maxPt;
   ROS_DEBUG_STREAM("Bounding box keys (before): " << m_updateBBXMin[0] << " " <<m_updateBBXMin[1] << " " << m_updateBBXMin[2] << " / " <<m_updateBBXMax[0] << " "<<m_updateBBXMax[1] << " "<< m_updateBBXMax[2]);
 
-  // TODO: snap max / min keys to larger voxels by m_maxTreeDepth
-//   if (m_maxTreeDepth < 16)
-//   {
-//      OcTreeKey tmpMin = getIndexKey(m_updateBBXMin, m_maxTreeDepth); // this should give us the first key at depth m_maxTreeDepth that is smaller or equal to m_updateBBXMin (i.e. lower left in 2D grid coordinates)
-//      OcTreeKey tmpMax = getIndexKey(m_updateBBXMax, m_maxTreeDepth); // see above, now add something to find upper right
-//      tmpMax[0]+= m_octree->getNodeSize( m_maxTreeDepth ) - 1;
-//      tmpMax[1]+= m_octree->getNodeSize( m_maxTreeDepth ) - 1;
-//      tmpMax[2]+= m_octree->getNodeSize( m_maxTreeDepth ) - 1;
-//      m_updateBBXMin = tmpMin;
-//      m_updateBBXMax = tmpMax;
-//   }
 
   // TODO: we could also limit the bbx to be within the map bounds here (see publishing check)
   minPt = m_octree->keyToCoord(m_updateBBXMin);
@@ -445,8 +364,6 @@ void TextureOctomapServer::insertScan(const tf::Point& sensorOriginTf, const oct
 
   if (m_compressMap)
     m_octree->prune();
-
-
 }
 
 
@@ -871,115 +788,6 @@ void TextureOctomapServer::publishFullOctoMap(const ros::Time& rostime) const{
 
 }
 
-/*
-void TextureOctomapServer::filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const{
-  ground.header = pc.header;
-  nonground.header = pc.header;
-
-  if (pc.size() < 50){
-    ROS_WARN("Pointcloud in TextureOctomapServer too small, skipping ground plane extraction");
-    nonground = pc;
-  } else {
-    // plane detection for ground plane removal:
-    pcl::ModelCoefficients::Ptr coefficients (new pcl::ModelCoefficients);
-    pcl::PointIndices::Ptr inliers (new pcl::PointIndices);
-
-    // Create the segmentation object and set up:
-    pcl::SACSegmentation<pcl::PointXYZI> seg;
-    seg.setOptimizeCoefficients (true);
-    // TODO: maybe a filtering based on the surface normals might be more robust / accurate?
-    seg.setModelType(pcl::SACMODEL_PERPENDICULAR_PLANE);
-    seg.setMethodType(pcl::SAC_RANSAC);
-    seg.setMaxIterations(200);
-    seg.setDistanceThreshold (m_groundFilterDistance);
-    seg.setAxis(Eigen::Vector3f(0,0,1));
-    seg.setEpsAngle(m_groundFilterAngle);
-
-
-    PCLPointCloud cloud_filtered(pc);
-    // Create the filtering object
-    pcl::ExtractIndices<pcl::PointXYZI> extract;
-    bool groundPlaneFound = false;
-
-    while(cloud_filtered.size() > 10 && !groundPlaneFound){
-      seg.setInputCloud(cloud_filtered.makeShared());
-      seg.segment (*inliers, *coefficients);
-      if (inliers->indices.size () == 0){
-        ROS_INFO("PCL segmentation did not find any plane.");
-
-        break;
-      }
-
-      extract.setInputCloud(cloud_filtered.makeShared());
-      extract.setIndices(inliers);
-
-      if (std::abs(coefficients->values.at(3)) < m_groundFilterPlaneDistance){
-        ROS_DEBUG("Ground plane found: %zu/%zu inliers. Coeff: %f %f %f %f", inliers->indices.size(), cloud_filtered.size(),
-                  coefficients->values.at(0), coefficients->values.at(1), coefficients->values.at(2), coefficients->values.at(3));
-        extract.setNegative (false);
-        extract.filter (ground);
-
-        // remove ground points from full pointcloud:
-        // workaround for PCL bug:
-        if(inliers->indices.size() != cloud_filtered.size()){
-          extract.setNegative(true);
-          PCLPointCloud cloud_out;
-          extract.filter(cloud_out);
-          nonground += cloud_out;
-          cloud_filtered = cloud_out;
-        }
-
-        groundPlaneFound = true;
-      } else{
-        ROS_DEBUG("Horizontal plane (not ground) found: %zu/%zu inliers. Coeff: %f %f %f %f", inliers->indices.size(), cloud_filtered.size(),
-                  coefficients->values.at(0), coefficients->values.at(1), coefficients->values.at(2), coefficients->values.at(3));
-        pcl::PointCloud<pcl::PointXYZI> cloud_out;
-        extract.setNegative (false);
-        extract.filter(cloud_out);
-        nonground +=cloud_out;
-        // debug
-        //            pcl::PCDWriter writer;
-        //            writer.write<pcl::PointXYZ>("nonground_plane.pcd",cloud_out, false);
-
-        // remove current plane from scan for next iteration:
-        // workaround for PCL bug:
-        if(inliers->indices.size() != cloud_filtered.size()){
-          extract.setNegative(true);
-          cloud_out.points.clear();
-          extract.filter(cloud_out);
-          cloud_filtered = cloud_out;
-        } else{
-          cloud_filtered.points.clear();
-        }
-      }
-
-    }
-    // TODO: also do this if overall starting pointcloud too small?
-    if (!groundPlaneFound){ // no plane found or remaining points too small
-      ROS_WARN("No ground plane found in scan");
-
-      // do a rough fitlering on height to prevent spurious obstacles
-      pcl::PassThrough<pcl::PointXYZI> second_pass;
-      second_pass.setFilterFieldName("z");
-      second_pass.setFilterLimits(-m_groundFilterPlaneDistance, m_groundFilterPlaneDistance);
-      second_pass.setInputCloud(pc.makeShared());
-      second_pass.filter(ground);
-
-      second_pass.setFilterLimitsNegative (true);
-      second_pass.filter(nonground);
-    }
-
-    // debug:
-    //        pcl::PCDWriter writer;
-    //        if (pc_ground.size() > 0)
-    //          writer.write<pcl::PointXYZ>("ground.pcd",pc_ground, false);
-    //        if (pc_nonground.size() > 0)
-    //          writer.write<pcl::PointXYZ>("nonground.pcd",pc_nonground, false);
-
-  }
-}
-*/
-
 void TextureOctomapServer::handlePreNodeTraversal(const ros::Time& rostime){
   if (m_publish2DMap){
     // init projected 2D map:
@@ -1083,8 +891,6 @@ void TextureOctomapServer::handlePreNodeTraversal(const ros::Time& rostime){
        }
 
     }
-       
-
 
   }
 
@@ -1276,6 +1082,51 @@ std_msgs::ColorRGBA TextureOctomapServer::heightMapColor(double h) {
 
   return color;
 }
+
+
+void TextureOctomapServer::trackChanges() {
+  KeyBoolMap::const_iterator startPnt = m_octree->changedKeysBegin();
+  KeyBoolMap::const_iterator endPnt = m_octree->changedKeysEnd();
+
+  pcl::PointCloud<pcl::PointXYZI> changedCells = pcl::PointCloud<pcl::PointXYZI>();
+
+  int c = 0;
+  for (KeyBoolMap::const_iterator iter = startPnt; iter != endPnt; ++iter) {
+    c++;
+    OcTreeNode* node = m_octree->search(iter->first);
+
+    bool occupied = m_octree->isNodeOccupied(node);
+
+    pcl::PointXYZI pnt;
+    pnt.x = m_octree->keyToCoord(iter->first.k[0]);
+    pnt.y = m_octree->keyToCoord(iter->first.k[1]);
+    pnt.z = m_octree->keyToCoord(iter->first.k[2]);
+
+    if (occupied) {
+      pnt.intensity = 1000;
+    }
+    else {
+      pnt.intensity = -1000;
+    }
+
+    changedCells.push_back(pnt);
+  }
+
+  sensor_msgs::PointCloud2 changed;
+  pcl::toROSMsg(changedCells, changed);
+  changed.header.frame_id = "/talker/changes";
+  changed.header.stamp = ros::Time().now();
+  pubChangeSet.publish(changed);
+  ROS_DEBUG("[server] sending %d changed entries", (int)changedCells.size());
+
+  m_octree->resetChangeDetection();
+  ROS_DEBUG("[server] octomap size after updating: %d", (int)m_octree->calcNumNodes());
+}
+
+
+
+
+
 }
 
 

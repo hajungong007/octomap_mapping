@@ -43,9 +43,6 @@
 #include <pcl/point_types.h>
 #include <pcl/conversions.h>
 #include <pcl_ros/transforms.h>
-//#include <pcl/sample_consensus/method_types.h>
-//#include <pcl/sample_consensus/model_types.h>
-//#include <pcl/segmentation/sac_segmentation.h>
 #include <pcl/io/pcd_io.h>
 #include <pcl/filters/extract_indices.h>
 #include <pcl/filters/passthrough.h>
@@ -120,19 +117,15 @@ protected:
   void publishAll(const ros::Time& rostime = ros::Time::now());
 
   /**
-  * @brief update occupancy map with a scan labeled as ground and nonground.
-  * The scans should be in the global map frame.
+  * @brief update occupancy map with a scan
+  * The scan should be in the global map frame.
   *
   * @param sensorOrigin origin of the measurements for raycasting
-  * @param ground scan endpoints on the ground plane (only clear space)
-  * @param nonground all other endpoints (clear up to occupied endpoint)
+  * @param scan scan endpoints
   */
   virtual void insertScan(const tf::Point& sensorOrigin, const octomath::Vector3& sensorOrientation, 
-                          const PCLPointCloud& ground, const PCLPointCloud& nonground);
+                          const PCLPointCloud& scan);
 
-  /// label the input cloud "pc" into ground and nonground. Should be in the robot's fixed frame (not world!)
-  //void filterGroundPlane(const PCLPointCloud& pc, PCLPointCloud& ground, PCLPointCloud& nonground) const;
-  
   void synthesizeView(const octomap::point3d& pos, const octomath::Quaternion& orient, 
                       const unsigned int& h, const unsigned int& w,
                       const float& fx, const float& fy,
@@ -208,17 +201,14 @@ protected:
   tf::TransformListener m_tfListener;
   dynamic_reconfigure::Server<OctomapServerConfig> m_reconfigureServer;
 
-  //octomap::OcTree* m_octree;
   OcTreeT* m_octree;
   octomap::KeyRay m_keyRay;  // temp storage for ray casting
   octomap::OcTreeKey m_updateBBXMin;
   octomap::OcTreeKey m_updateBBXMax;
 
   double m_maxRange;
-  //bool m_stereoModel; //Stereo model is assumed
   double m_stereoErrorCoeff;
   std::string m_worldFrameId; // the map frame
-  std::string m_baseFrameId; // base of the robot for ground plane filtering
   bool m_useHeightMap;
   std_msgs::ColorRGBA m_color;
   std_msgs::ColorRGBA m_colorFree;
@@ -244,11 +234,6 @@ protected:
   double m_minSizeY;
   bool m_filterSpeckles;
 
-  //bool m_filterGroundPlane;
-  //double m_groundFilterDistance;
-  //double m_groundFilterAngle;
-  //double m_groundFilterPlaneDistance;
-
   bool m_compressMap;
 
   // downprojected 2D map:
@@ -259,6 +244,11 @@ protected:
   octomap::OcTreeKey m_paddedMinKey;
   unsigned m_multires2DScale;
   bool m_projectCompleteMap;
+
+  // Track changes
+  bool track_changes;
+  ros::Publisher pubChangeSet;
+  void trackChanges();
 };
 }
 
