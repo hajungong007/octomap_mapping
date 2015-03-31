@@ -249,6 +249,10 @@ protected:
   bool track_changes;
   ros::Publisher pubChangeSet;
   void trackChanges();
+
+  // Publish face markers
+  ros::Publisher m_facePub;
+  bool m_faceMarkerColor;
 };
 }
 

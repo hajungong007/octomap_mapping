@@ -87,6 +87,7 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   private_nh.param("compress_map", m_compressMap, m_compressMap);
   private_nh.param("incremental_2D_projection", m_incrementalUpdate, m_incrementalUpdate);
 
+  private_nh.param("face_marker_color", m_faceMarkerColor, m_faceMarkerColor);
 
   // initialize octomap object & params
   ROS_INFO("OctoMap Server: Using stereo error model.");
@@ -133,6 +134,7 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
   m_pointCloudPub = m_nh.advertise<sensor_msgs::PointCloud2>("octomap_point_cloud_centers", 1, m_latchedTopics);
   m_mapPub = m_nh.advertise<nav_msgs::OccupancyGrid>("projected_map", 5, m_latchedTopics);	
   m_fmarkerPub = m_nh.advertise<visualization_msgs::MarkerArray>("free_cells_vis_array", 1, m_latchedTopics);
+  m_facePub = m_nh.advertise<visualization_msgs::MarkerArray>("face_marker_array", 1, m_latchedTopics);
 
   m_pointCloudSub = new message_filters::Subscriber<sensor_msgs::PointCloud2> (m_nh, "cloud_in", 5);
   ROS_INFO("Setting up message filter with world frame %s", m_worldFrameId.c_str());
@@ -382,6 +384,7 @@ void TextureOctomapServer::publishAll(const ros::Time& rostime){
   bool publishPointCloud = (m_latchedTopics || m_pointCloudPub.getNumSubscribers() > 0);
   bool publishBinaryMap = (m_latchedTopics || m_binaryMapPub.getNumSubscribers() > 0);
   bool publishFullMap = (m_latchedTopics || m_fullMapPub.getNumSubscribers() > 0);
+  bool publishFaceMarkers = (m_latchedTopics || m_facePub.getNumSubscribers() > 0);
   m_publish2DMap = (m_latchedTopics || m_mapPub.getNumSubscribers() > 0);
 
   // init markers for free space:
@@ -396,6 +399,11 @@ void TextureOctomapServer::publishAll(const ros::Time& rostime){
   visualization_msgs::MarkerArray occupiedNodesVis;
   // each array stores all cubes of a different size, one for each depth level:
   occupiedNodesVis.markers.resize(m_treeDepth+1);
+
+  // init face markers:
+  visualization_msgs::MarkerArray faceMarkersVis;
+  // each set of 6 arrays stores faces of a different size, one set for each depth level:
+  faceMarkersVis.markers.resize(6*(m_treeDepth+1));
 
   // init pointcloud:
   pcl::PointCloud<pcl::PointXYZ> pclCloud;
@@ -451,6 +459,61 @@ void TextureOctomapServer::publishAll(const ros::Time& rostime){
 
             double h = (1.0 - std::min(std::max((cubeCenter.z-minZ)/ (maxZ - minZ), 0.0), 1.0)) *m_colorFactor;
             occupiedNodesVis.markers[idx].colors.push_back(heightMapColor(h));
+          }
+        }
+
+        if (publishFaceMarkers) {
+          unsigned idx = it.getDepth();
+          // Add a marker for each face that has some observations
+          for(unsigned i=0; i<6; ++i){
+            unsigned face_idx = 6*idx + i;
+            assert(face_idx < faceMarkersVis.markers.size());
+
+            if(it->getFaceObservations((octomap::FaceEnum) i) > 0 )
+            {
+              unsigned char face_texture = it->getFaceValue((octomap::FaceEnum) i);
+              geometry_msgs::Point face_center;
+              face_center.x = x;
+              face_center.y = y;
+              face_center.z = z;
+
+              double size = m_octree->getNodeSize(idx);
+              switch(i) {
+                case 0:
+                  face_center.x += size/2.0; 
+                  break;
+                case 1:
+                  face_center.x -= size/2.0; 
+                  break;
+                case 2:
+                  face_center.y += size/2.0; 
+                  break;
+                case 3:
+                  face_center.y -= size/2.0; 
+                  break;
+                case 4:
+                  face_center.z += size/2.0; 
+                  break;
+                case 5:
+                  face_center.z -= size/2.0; 
+                  break;
+              }
+              faceMarkersVis.markers[face_idx].points.push_back(face_center);
+
+              double face_intensity = (double) face_texture / 255.0;
+              if (m_faceMarkerColor){
+                double h = (1.0 - face_intensity)*m_colorFactor;
+                faceMarkersVis.markers[face_idx].colors.push_back(heightMapColor(h));
+              }
+              else {
+                std_msgs::ColorRGBA gray;
+                gray.r = face_intensity;
+                gray.g = face_intensity;
+                gray.b = face_intensity;
+                gray.a = 1.0;
+                faceMarkersVis.markers[face_idx].colors.push_back(gray);
+              }
+            }
           }
         }
 
@@ -543,6 +606,38 @@ void TextureOctomapServer::publishAll(const ros::Time& rostime){
     m_fmarkerPub.publish(freeNodesVis);
   }
 
+  // finish FaceMarkerArray:
+  if (publishFaceMarkers){
+    for (unsigned i= 0; i < faceMarkersVis.markers.size(); ++i){
+      unsigned depth = floor(i/6);
+      unsigned this_face = i % 6;
+      double size = m_octree->getNodeSize(depth);
+
+      faceMarkersVis.markers[i].header.frame_id = m_worldFrameId;
+      faceMarkersVis.markers[i].header.stamp = rostime;
+      faceMarkersVis.markers[i].ns = "map";
+      faceMarkersVis.markers[i].id = i;
+      faceMarkersVis.markers[i].type = visualization_msgs::Marker::CUBE_LIST;
+      faceMarkersVis.markers[i].scale.x = size;
+      faceMarkersVis.markers[i].scale.y = size;
+      faceMarkersVis.markers[i].scale.z = size;
+      faceMarkersVis.markers[i].color = m_color;
+
+      if(this_face == 0 || this_face == 1)
+          faceMarkersVis.markers[i].scale.x = size/100.0;
+      else if (this_face == 2 || this_face == 3)
+          faceMarkersVis.markers[i].scale.y = size/100.0;
+      else if (this_face == 4 || this_face == 5)
+          faceMarkersVis.markers[i].scale.z = size/100.0;
+
+      if (faceMarkersVis.markers[i].points.size() > 0)
+        faceMarkersVis.markers[i].action = visualization_msgs::Marker::ADD;
+      else
+        faceMarkersVis.markers[i].action = visualization_msgs::Marker::DELETE;
+    }
+
+    m_facePub.publish(faceMarkersVis);
+  }
 
   // finish pointcloud:
   if (publishPointCloud){
