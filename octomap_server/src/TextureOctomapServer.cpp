@@ -805,7 +805,7 @@ void TextureOctomapServer::synthesizeView(const point3d& pos, const octomath::Qu
       else
       {
         image.at<unsigned char>(v,u) = 0;
-        depth.at<float>(v,u) = 0.0;
+        depth.at<float>(v,u) = std::numeric_limits<float>::max();
       }
     }
   }
