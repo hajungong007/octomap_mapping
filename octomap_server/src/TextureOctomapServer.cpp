@@ -162,6 +162,9 @@ TextureOctomapServer::TextureOctomapServer(ros::NodeHandle private_nh_)
     pubChangeSet = private_nh.advertise<sensor_msgs::PointCloud2>(changeSetTopic, 1);
     m_octree->enableChangeDetection(true);
   }
+
+  m_pause = m_nh.advertiseService("pause_mapping", &TextureOctomapServer::pauseSrv, this);
+  m_unpause = m_nh.advertiseService("unpause_mapping", &TextureOctomapServer::unpauseSrv, this);
 }
 
 TextureOctomapServer::~TextureOctomapServer(){
@@ -1052,11 +1055,17 @@ void TextureOctomapServer::update2DMap(const OcTreeT::iterator& it, bool occupie
       }
     }
   }
-
-
 }
 
+bool TextureOctomapServer::pauseSrv(std_srvs::Empty::Request& req, std_srvs::Empty::Response& resp)
+{
+  m_pointCloudSub->unsubscribe();
+}
 
+bool TextureOctomapServer::unpauseSrv(std_srvs::Empty::Request& req, std_srvs::Empty::Response& resp)
+{
+  m_pointCloudSub->subscribe(m_nh, "cloud_in", 5);
+}
 
 bool TextureOctomapServer::isSpeckleNode(const OcTreeKey&nKey) const {
   OcTreeKey key;

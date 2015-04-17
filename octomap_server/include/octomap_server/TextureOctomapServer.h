@@ -34,6 +34,7 @@
 #include <visualization_msgs/MarkerArray.h>
 #include <nav_msgs/OccupancyGrid.h>
 #include <std_msgs/ColorRGBA.h>
+#include <std_srvs/Empty.h>
 
 #include <sensor_msgs/PointCloud2.h>
 #include <std_srvs/Empty.h>
@@ -190,6 +191,10 @@ protected:
              || oldMapInfo.origin.position.x != newMapInfo.origin.position.x
              || oldMapInfo.origin.position.y != newMapInfo.origin.position.y);
   }
+  
+  /* Pasue and unpause service calls to avoid mapping during other activities */
+  bool pauseSrv(std_srvs::Empty::Request& req, std_srvs::Empty::Response& resp);
+  bool unpauseSrv(std_srvs::Empty::Request& req, std_srvs::Empty::Response& resp);
 
   static std_msgs::ColorRGBA heightMapColor(double h);
   ros::NodeHandle m_nh;
@@ -253,6 +258,10 @@ protected:
   // Publish face markers
   ros::Publisher m_facePub;
   bool m_faceMarkerColor;
+
+  // Services for pausing and unpausing
+  ros::ServiceServer m_pause;
+  ros::ServiceServer m_unpause;
 };
 }
 
